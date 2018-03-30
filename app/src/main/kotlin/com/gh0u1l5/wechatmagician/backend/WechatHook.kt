@@ -6,11 +6,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.XModuleResources
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Environment.MEDIA_MOUNTED
-import android.widget.Toast
+import android.support.v4.app.Fragment
+import android.view.MotionEvent
+import android.view.View
+import android.widget.*
 import android.widget.Toast.LENGTH_SHORT
 import com.gh0u1l5.wechatmagician.BuildConfig
 import com.gh0u1l5.wechatmagician.Global.ACTION_REQUIRE_HOOK_STATUS
@@ -22,6 +27,7 @@ import com.gh0u1l5.wechatmagician.backend.plugins.*
 import com.gh0u1l5.wechatmagician.backend.storage.Preferences
 import com.gh0u1l5.wechatmagician.backend.storage.list.ChatroomHideList
 import com.gh0u1l5.wechatmagician.backend.storage.list.SecretFriendList
+import com.gh0u1l5.wechatmagician.spellbook.C
 import com.gh0u1l5.wechatmagician.spellbook.SpellBook
 import com.gh0u1l5.wechatmagician.spellbook.SpellBook.getApplicationApkPath
 import com.gh0u1l5.wechatmagician.spellbook.SpellBook.isImportantWechatProcess
@@ -34,14 +40,13 @@ import com.gh0u1l5.wechatmagician.spellbook.util.MirrorUtil.findAllMirrorObjects
 import com.gh0u1l5.wechatmagician.util.FileUtil
 import com.gh0u1l5.wechatmagician.util.FileUtil.createTimeTag
 import dalvik.system.PathClassLoader
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XC_MethodReplacement
-import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.*
 import de.robv.android.xposed.XposedBridge.log
 import de.robv.android.xposed.XposedHelpers.findAndHookMethod
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.io.File
+import java.lang.reflect.Field
+import java.lang.reflect.Method
 
 // WechatHook is the entry point of the module, here we load all the plugins.
 class WechatHook : IXposedHookLoadPackage {
@@ -184,6 +189,88 @@ class WechatHook : IXposedHookLoadPackage {
         } else {
             SpellBook.startup(lpparam, plugins, listOf(Limits, Developer))
         }
+
+        custom(lpparam)
+
+    }
+
+    private fun isViewShown(view: View?): Boolean {
+        val isShown = view?.isShown ?: false
+        return isShown
+    }
+
+    private fun custom(lpparam: XC_LoadPackage.LoadPackageParam){
+
+//        // 1. 对话列表页创建的时候，保存this引用；每次onResume时候，直接调用onItemClick方法
+//        val conversationUI = "com.tencent.mm.ui.conversation.ConversationWithAppBrandListView"
+//        val conversationUIClass = XposedHelpers.findClass(conversationUI, lpparam.classLoader)
+//        findAndHookMethod(conversationUIClass, "onDraw", Canvas::class.java, object : XC_MethodHook() {
+//            override fun afterHookedMethod(param: MethodHookParam) {
+//                // TODO: 再次进入微信调用方法会卡死, 關閉微信，再進入，這個方法會重複進入多次
+//                val conversationListView = param.thisObject as? ListView
+//                val isShown = conversationListView?.isShown
+//                XposedBridge.log("isShown:$isShown")
+//                val canvas: Canvas? = param.args[0] as? Canvas
+//                XposedBridge.log(canvas?.toString())
+////                val firstVisiblePosition:Int? = conversationListView?.firstVisiblePosition
+////                val firstChild = conversationListView?.getChildAt(firstVisiblePosition!!)
+////                if (firstVisiblePosition != null) {
+////                    conversationListView.onItemClickListener.onItemClick(conversationListView, firstChild, firstVisiblePosition, 0)
+////                }
+//            }
+//        })
+
+
+        // dollar 符号在Java中会被转为 .
+        val chattingUIName = "com.tencent.mm.ui.chatting.ChattingUI\$a"
+        val chattingUI = XposedHelpers.findClass(chattingUIName, lpparam.classLoader)
+        val chatFooterName = "com.tencent.mm.ui.chatting.b.j"
+        findAndHookMethod(chatFooterName, lpparam.classLoader, "cup", object : XC_MethodHook() {
+            // 在cup的cuq方法会隐藏键盘，所以在方法执行完成后，我们唤起键盘
+            override fun afterHookedMethod(param: MethodHookParam) {
+                XposedBridge.log("开始HOOK调用" + param.thisObject.javaClass.canonicalName)
+                // 显示键盘
+                val ctpMethod = chattingUI.getMethod("ctp")
+                val chattingUIInstance = XposedHelpers.findField(param.thisObject.javaClass, "fhH").get(param.thisObject)
+
+                val chatFooter = ctpMethod.invoke(chattingUIInstance) as LinearLayout
+                if(!isViewShown(chatFooter) || chatFooter.visibility != View.VISIBLE){
+                    XposedBridge.log("not visible to user, just return")
+                    return
+                }
+
+                val textContent = "看甜美可爱的阳毅哥" + System.currentTimeMillis()
+                val chatFooterSetContent = XposedHelpers.findMethodExact(chatFooter.javaClass, "Td", C.String)
+                chatFooterSetContent.invoke(chatFooter, textContent)
+
+                val textInput = XposedHelpers.findField(chatFooter.javaClass, "oqa").get(chatFooter) as EditText
+                textInput.setText(textContent)
+                textInput.setSelection(textContent.length)
+
+//                val showVKBMethod = chatFooter.javaClass.getMethod("showVKB")
+//                showVKBMethod.isAccessible = true
+//                showVKBMethod.invoke(chatFooter)
+                // 获取发送按钮
+                val sendMsgButton: Button = XposedHelpers.findField(chatFooter.javaClass, "oqb").get(chatFooter) as Button
+//                if(isViewShown(sendMsgButton) && sendMsgButton.visibility == View.VISIBLE){
+                    sendMsgButton.performClick()
+
+                val goBackAfterSent = true
+                if(goBackAfterSent){
+                    val goBackMethod = chattingUI.getDeclaredMethod("goBack")
+                    goBackMethod.isAccessible = true
+//                    val goBackMethod = XposedHelpers.findMethodExact(chattingUI, "goBack", null)
+                    goBackMethod.invoke(chattingUIInstance)
+                }
+//                }else{
+//                    XposedBridge.log("button没有显示${sendMsgButton.visibility}")
+//                }
+
+            }})
+    }
+
+    private fun sendMessage(lpparam: XC_LoadPackage.LoadPackageParam, message: String, exitAfterComplete: Boolean, chatFooter: LinearLayout){
+
     }
 
     // handleLoadWechatOnFly uses reflection to load updated module without reboot.
